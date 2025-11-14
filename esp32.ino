@@ -12,8 +12,8 @@ enum ModoCoche {
 ModoCoche MODO_ACTUAL = MODO_SEGUIMIENTO;  
 
 // Mejoras: constantes y helper para parser TFmini-S
-const uint16_t STOP_THRESHOLD = 10;      // umbral para STOP
-
+const uint16_t DISTANCIA_PARED_LATERAL = 10;      // umbral para STOP
+const uint16_t DISTANCIA_PARED_FRONTAL = 10;  
 // Lee un paquete TFmini-S desde 'ser'. Devuelve true si se consiguió una distancia válida.
 bool readTFmini(HardwareSerial &ser, uint16_t &dist, unsigned long timeoutMs = 25) {
   uint8_t buf[9];
@@ -85,12 +85,23 @@ void loop() {
       const char* lectura2 = "N/A";
 
       // Intentar leer LIDAR 1 y 2 (no bloqueante, con timeout corto)
-      if (readTFmini(tfLidar1, dist_1)) {
-        lectura1 = (dist_1 <= STOP_THRESHOLD) ? "STOP" : "AVANZA";
+  
+      if (readTFmini(tfLidar2, dist_2)) {
+        if (dist_2 < DISTANCIA_PARED_LATERAL) {
+        lectura2 = "GIRAR DERECHA";
+        } 
+        else if (dist_2 > DISTANCIA_PARED_LATERAL) {
+        lectura2 = "GIRAR IZQUIERDA";
+        } 
+        else {
+        // Esta es la única opción que queda: (dist_2 == DISTANCIA_PARED_LATERAL)
+        lectura2 = "AVANZA";
+    }
       }
 
-      if (readTFmini(tfLidar2, dist_2)) {
-        lectura2 = (dist_2 <= STOP_THRESHOLD) ? "STOP" : "AVANZA";
+
+      if (readTFmini(tfLidar1, dist_1)) {
+        lectura1 = (dist_1 <= DISTANCIA_PARED_FRONTAL) ? "STOP" : "AVANZA";
       }
 
       // Imprimir periódicamente para no saturar el monitor
@@ -111,8 +122,23 @@ void loop() {
       break;
 
     case MODO_FRENADA:
-      // (Aquí deberías aplicar los mismos arreglos: 2 buffers)
       Serial.println("Modo FRENADA activado");
+
+        static uint16_t dist_1 = 0;
+        static unsigned long lastPrint = 0;
+        const char* lectura1 = "N/A";
+        const unsigned long PRINT_INTERVAL = 200; // ms
+
+       if (readTFmini(tfLidar1, dist_1)) {
+        lectura1 = (dist_1 <= DISTANCIA_PARED_FRONTAL) ? "STOP" : "AVANZA";
+      }
+
+      // Imprimir distancia y STOP o AVANZA por pantalla
+      if (millis() - lastPrint >= PRINT_INTERVAL) {
+        lastPrint = millis();
+        Serial.printf("LIDAR 1: %s \tDist: %d\n",
+                      lectura1, dist_1);
+      }
       break;
   }
 }
