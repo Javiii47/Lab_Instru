@@ -1,6 +1,6 @@
 // ==== TFmini-S con ESP32 (UART2) ====
 
-HardwareSerial tfSerial(2);  // Lidar 1 (UART2) en pines 34, 35
+HardwareSerial tfLidar1(2);  // Lidar 1 (UART2) en pines 34, 35
 HardwareSerial tfLidar2(1);  // Lidar 2 (UART1) en pines 16, 17
 
 enum ModoCoche {
@@ -15,7 +15,7 @@ void setup() {
   Serial.begin(115200);           // Monitor serie del PC
   
   // Dejamos tus pines, como dijiste
-  tfSerial.begin(115200, SERIAL_8N1, 34, 35); 
+  tfLidar1.begin(115200, SERIAL_8N1, 34, 35); 
   tfLidar2.begin(115200, SERIAL_8N1, 16, 17);
   
   Serial.println("Iniciando TFmini-S...");
@@ -41,20 +41,20 @@ void loop() {
       // =======================================================
       // ARREGLO 2: Dos buffers (cajones) SEPARADOS
       // =======================================================
-      uint8_t data_Lidar1[9]; // Buffer para tfSerial
+      uint8_t data_Lidar1[9]; // Buffer para tfLidar1
       uint8_t data_Lidar2[9]; // Buffer para tfLidar2
 
 
-      // --- Lógica Lidar 1 (tfSerial) ---
-      if (tfSerial.available()) {
-        if (tfSerial.read() == 0x59) {
-          if (tfSerial.available() && tfSerial.peek() == 0x59) {
-            tfSerial.read(); 
+      // --- Lógica Lidar 1 (tfLidar1) ---
+      if (tfLidar1.available()) {
+        if (tfLidar1.read() == 0x59) {
+          if (tfLidar1.available() && tfLidar1.peek() == 0x59) {
+            tfLidar1.read(); 
 
-            if (tfSerial.available() >= 7) {
+            if (tfLidar1.available() >= 7) {
               // Usamos el buffer 1
               for (int i = 2; i < 9; i++) {
-                data_Lidar1[i] = tfSerial.read();
+                data_Lidar1[i] = tfLidar1.read();
               }
               data_Lidar1[0] = 0x59; data_Lidar1[1] = 0x59;
 
