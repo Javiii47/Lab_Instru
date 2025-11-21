@@ -6,8 +6,6 @@
 
 // --- CONFIGURACIÓN LIDAR ---
 HardwareSerial tfLidar1(2);  // Lidar 1 (UART2) en pines 34 (RX), 35 (TX)
-HardwareSerial tfLidar2(1);  // Lidar 2 (UART1) en pines 16 (RX), 17 (TX)
-
 // --- CONFIGURACIÓN MOTOR ---
 // Ajusta estos pines según tu cableado real si el motor gira al revés
 const int RPWM_PIN = 26; // Velocidad Adelante
@@ -139,26 +137,10 @@ void loop() {
     // -----------------------------------------------------
     case MODO_SEGUIMIENTO: {
       static uint16_t dist_1 = 0;
-      static uint16_t dist_2 = 0;
       static unsigned long lastPrint = 0;
       const unsigned long PRINT_INTERVAL = 200;
 
       const char* lectura1 = "N/A";
-      const char* lectura2 = "N/A";
-
-      // Lógica Lidar 2 (Lateral)
-      if (readTFmini(tfLidar2, dist_2)) {
-        if (dist_2 < DISTANCIA_PARED_LATERAL) {
-           lectura2 = "GIRAR DERECHA";
-           // Aquí iría lógica de servo si la tuvieras
-        } 
-        else if (dist_2 > DISTANCIA_PARED_LATERAL) {
-           lectura2 = "GIRAR IZQUIERDA";
-        } 
-        else {
-           lectura2 = "AVANZA";
-        }
-      }
 
       // Lógica Lidar 1 (Frontal)
       if (readTFmini(tfLidar1, dist_1)) {
