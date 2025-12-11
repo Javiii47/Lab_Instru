@@ -5,26 +5,23 @@
 // ==========================================
 // 1. CONFIGURACIÓN WIFI (SCADA)
 // ==========================================
-//const char* ssid = "iPhone de Lucia";      // PON AQUÍ TU RED
-//const char* password = "hola1234";  
-
 const char* ssid = "Qué mira bobo";      // PON AQUÍ TU RED
 const char* password = "Peppa Pig";         // PON AQUÍ TU PASS
 WiFiServer tcpServer(23);                  // Puerto 23
 WiFiClient client;                         // Cliente global
 
 // Variables para simular batería
-float sim_vbat = 12.6;
-float sim_ibat = 2.0;
+float sim_vbat = 6;
+float sim_ibat = 5;
 
 // ==========================================
 // 2. CONFIGURACIÓN HARDWARE COCHE
 // ==========================================
 // --- LIDAR ---
-HardwareSerial tfLidar1(2);  // Pines 16 (RX), 17 (TX)w
+HardwareSerial tfLidar1(2);  // Pines 16 (RX), 17 (TX)
 
 // --- MOTOR ---
-const int RPWM_PIN = 15; 
+const int RPWM_PIN = 25; 
 const int EN_R_PIN = 26; 
 const int LPWM_PIN = 27; 
 const int EN_L_PIN = 33; 
@@ -42,16 +39,14 @@ const int DIR_CENTRO = 90;
 const int DIR_IZQUIERDA = 60;  
 const int DIR_DERECHA = 120;   
 
-// --- CONSTANTES DE CONTROL ---
-int VELOCIDAD_MAX = 200; 
-int VELOCIDAD_MIN = 0;
+// --- CONSTANTES DE SEGURIDAD (MODIFICADAS PARA QUE NO CHOQUE) ---
+// Velocidades mucho más bajas para controlar la inercia
+int VELOCIDAD_MAX_SEGURA = 100; 
+int VELOCIDAD_LENTA = 65;       
 int VELOCIDAD_SEGUIMIENTO = 80; 
-uint16_t DISTANCIA_INICIO_FRENADA = 60; 
 
-// Distancia objetivo para frenar (recibida del SCADA)
-uint16_t DISTANCIA_OBJETIVO = 10; 
-
-const uint16_t DISTANCIA_PARED_DESEADA = 30;  
+// Distancias de Seguridad
+uint16_t DISTANCIA_OBJETIVO = 50; // Paramos a 20cm para asegurar
 const uint16_t MARGEN_SEGUIMIENTO = 1; 
 
 // --- MODOS DE FUNCIONAMIENTO ---
@@ -59,10 +54,11 @@ enum ModoCoche {
   MODO_FRENADA,     // 0
   MODO_CARRERA,     // 1
   MODO_SEGUIMIENTO, // 2
-  MODO_MANUAL       // 3 
+  MODO_ESPERA       // 3 
 };
 
-ModoCoche MODO_ACTUAL = MODO_SEGUIMIENTO;  
+// !!!!!!! SELECCIONA AQUÍ EL MODO !!!!!!!
+ModoCoche MODO_ACTUAL = MODO_FRENADA;  
 
 // Variables Globales de Estado
 uint16_t dist_actual = 0;   // Lectura Lidar
@@ -83,92 +79,83 @@ int rx_btn_seguimiento = 0;
 // ==========================================
 // 3. FUNCIONES PARSER (RECIBIR DATOS SCADA)
 // ==========================================
-// Espera: Ángulo;DutyFwd;DutyBwd;DistFrenada;Modo C;Modo F;Modo S*
 void procesarTramaSCADA(String trama) {
-  
-  // 1. Ángulo
   int idx1 = trama.indexOf(';');
   if(idx1 == -1) return; 
   rx_angulo = trama.substring(0, idx1).toInt();
   
-  // 2. Duty Fwd
   int idx2 = trama.indexOf(';', idx1 + 1);
   if(idx2 == -1) return;
   rx_duty_fwd = trama.substring(idx1 + 1, idx2).toInt();
 
-  // 3. Duty Bwd
   int idx3 = trama.indexOf(';', idx2 + 1);
   if(idx3 == -1) return;
   rx_duty_bwd = trama.substring(idx2 + 1, idx3).toInt();
 
-  // 4. Distancia Frenada Objetivo
   int idx4 = trama.indexOf(';', idx3 + 1);
   if(idx4 == -1) return;
   rx_dist_frenada = trama.substring(idx3 + 1, idx4).toInt();
   if(rx_dist_frenada > 0) DISTANCIA_OBJETIVO = rx_dist_frenada;
 
-  // 5. Modo Carrera (0 o 1)
   int idx5 = trama.indexOf(';', idx4 + 1);
   if(idx5 == -1) return;
   rx_btn_carrera = trama.substring(idx4 + 1, idx5).toInt();
 
-  // 6. Modo Frenada (0 o 1)
   int idx6 = trama.indexOf(';', idx5 + 1);
   if(idx6 == -1) return;
   rx_btn_frenada = trama.substring(idx5 + 1, idx6).toInt();
 
-  // 7. Modo Seguimiento (0 o 1)
   rx_btn_seguimiento = trama.substring(idx6 + 1).toInt();
 
-  // --- LÓGICA DE CAMBIO DE MODO ---
+  // Cambio de modo desde SCADA
   if (rx_btn_carrera == 1) {
     if (MODO_ACTUAL != MODO_CARRERA) {
         MODO_ACTUAL = MODO_CARRERA;
         servoLidar.write(ANGULO_LIDAR_FRENTE);
-        Serial.println("SCADA -> MODO CARRERA");
     }
   }
   else if (rx_btn_frenada == 1) {
     if (MODO_ACTUAL != MODO_FRENADA) {
         MODO_ACTUAL = MODO_FRENADA;
         servoLidar.write(ANGULO_LIDAR_FRENTE);
-        Serial.println("SCADA -> MODO FRENADA");
     }
   }
   else if (rx_btn_seguimiento == 1) {
     if (MODO_ACTUAL != MODO_SEGUIMIENTO) {
         MODO_ACTUAL = MODO_SEGUIMIENTO;
         servoLidar.write(ANGULO_LIDAR_PARED);
-        Serial.println("SCADA -> MODO SEGUIMIENTO");
     }
   }
 }
 
 // ==========================================
-// 4. FUNCIONES HARDWARE (MOTOR / LIDAR)
+// 4. FUNCIONES HARDWARE (CORREGIDAS)
 // ==========================================
 
+// --- LÓGICA INVERTIDA PARA CORREGIR EL SENTIDO ---
 void avanzarMotor(int velocidad) {
   velocidad = constrain(velocidad, 0, 255);
   pwm_actual = velocidad; 
   sentido_actual = 1;
+  
   digitalWrite(EN_L_PIN, HIGH); 
-  analogWrite(LPWM_PIN, 0);
+  analogWrite(LPWM_PIN, velocidad); // Velocidad por LPWM
+  
   digitalWrite(EN_R_PIN, HIGH);
-  analogWrite(RPWM_PIN, velocidad);
+  analogWrite(RPWM_PIN, 0);         // 0 por RPWM
 }
 
-// --- NUEVA FUNCIÓN AÑADIDA PARA MODO TELEDIRIGIDO ---
 void retrocederMotor(int velocidad) {
   velocidad = constrain(velocidad, 0, 255);
   pwm_actual = velocidad; 
-  sentido_actual = 0; // Indicamos que va hacia atrás
+  sentido_actual = 0; 
+  
   digitalWrite(EN_L_PIN, HIGH); 
-  analogWrite(LPWM_PIN, velocidad); // Activar PWM izquierdo para retroceso
+  analogWrite(LPWM_PIN, 0);         // 0 por LPWM
+  
   digitalWrite(EN_R_PIN, HIGH);
-  analogWrite(RPWM_PIN, 0);         // Apagar PWM derecho
+  analogWrite(RPWM_PIN, velocidad); // Velocidad por RPWM
 }
-// ----------------------------------------------------
 
 void detenerMotor() {
   pwm_actual = 0;
@@ -208,7 +195,7 @@ void actualizarLidarRapido() {
   uint16_t tempDist = 0;
   while (tfLidar1.available() >= 9) {
     if(readOnePacket(tfLidar1, tempDist)){
-       if(tempDist > 0 && tempDist < 1200) { 
+       if(tempDist < 1200) { // Filtramos errores grandes
           dist_actual = tempDist; 
        }
     }
@@ -230,7 +217,7 @@ void setup() {
   servoLidar.setPeriodHertz(50);    
   servoLidar.attach(PIN_SERVO_LIDAR, 500, 2400); 
   servoDireccion.setPeriodHertz(50);
-  servoDireccion.attach(PIN_SERVO_DIRECCION, 500, 2400);
+  servoDireccion.attach(PIN_SERVO_DIRECCION, 1000, 2000);
 
   // Estado Inicial
   detenerMotor();
@@ -239,7 +226,8 @@ void setup() {
   if (MODO_ACTUAL == MODO_SEGUIMIENTO) servoLidar.write(ANGULO_LIDAR_PARED);
   else servoLidar.write(ANGULO_LIDAR_FRENTE);
 
-  // --- 2. CONEXIÓN WIFI ---
+  // --- 2. CONEXIÓN WIFI (COMENTADO PARA PRUEBAS OFFLINE) ---
+  
   Serial.println("\nConectando a WiFi...");
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
@@ -256,6 +244,10 @@ void setup() {
 
   tcpServer.begin();
   Serial.println("Servidor TCP puerto 23 iniciado");
+  */
+  
+  Serial.println(">>> MODO OFFLINE ACTIVADO: WIFI COMENTADO <<<");
+  delay(1000);
 }
 
 // ==========================================
@@ -263,7 +255,7 @@ void setup() {
 // ==========================================
 void loop() {
   
-  // 1. GESTIÓN WIFI
+  // 1. GESTIÓN WIFI (Solo funcionará si descomentas el setup)
   if (tcpServer.hasClient()) {
     if (client.connected()) client.stop();
     client = tcpServer.available();
@@ -286,72 +278,107 @@ void loop() {
 
     // --- SEGUIMIENTO ---
     case MODO_SEGUIMIENTO: {
-      if (dist_actual > 0) {
-        if (dist_actual > (DISTANCIA_PARED_DESEADA + MARGEN_SEGUIMIENTO)) {
-           girarRuedas(DIR_IZQUIERDA);
-        }
-        else if (dist_actual < (DISTANCIA_PARED_DESEADA - MARGEN_SEGUIMIENTO)) {
-           girarRuedas(DIR_DERECHA);
-        }
-        else {
-           girarRuedas(DIR_CENTRO);
-        }
-        avanzarMotor(VELOCIDAD_SEGUIMIENTO);
+      if (dist_actual == 0) {
+         girarRuedas(DIR_DERECHA); // Si lee 0, aléjate
       }
+      else if (dist_actual > (30 + MARGEN_SEGUIMIENTO)) {
+         girarRuedas(DIR_IZQUIERDA);
+      }
+      else if (dist_actual < (30 - MARGEN_SEGUIMIENTO)) {
+         girarRuedas(DIR_DERECHA);
+      }
+      else {
+         girarRuedas(DIR_CENTRO);
+      }
+      avanzarMotor(VELOCIDAD_SEGUIMIENTO);
       break; 
     } 
 
-    // --- CARRERA (MODIFICADO: AHORA ES TELEDIRIGIDO) ---
-    case MODO_CARRERA:
-      // Control DIRECCIÓN: Usamos el ángulo que llega del SCADA
+    // --- CARRERA (TELEDIRIGIDO) ---
+    case MODO_CARRERA: {
       girarRuedas(rx_angulo);
-
-      // Control MOTOR: Usamos los duties que llegan del SCADA
-      // Ponemos un pequeño umbral (5) para que si el slider está a 0 no vibre
-      if (rx_duty_fwd > 5) {
-          // Si hay señal de avance
-          avanzarMotor(rx_duty_fwd);
-      } 
-      else if (rx_duty_bwd > 5) {
-          // Si hay señal de retroceso (y no de avance)
-          retrocederMotor(rx_duty_bwd);
-      } 
-      else {
-          // Si ambos están a 0
-          detenerMotor();
-      }
+      if (rx_duty_fwd > 5) avanzarMotor(rx_duty_fwd);
+      else if (rx_duty_bwd > 5) retrocederMotor(rx_duty_bwd);
+      else detenerMotor();
       break;
+    }
 
-    // --- FRENADA ---
-    case MODO_FRENADA: {
-       if (dist_actual > 0) {
-         if (dist_actual <= DISTANCIA_OBJETIVO) {
-            detenerMotor();
-         } 
-         else if (dist_actual > DISTANCIA_INICIO_FRENADA) {
-            avanzarMotor(VELOCIDAD_MAX);
-         } 
-         else {
-            int vel = map(dist_actual, DISTANCIA_OBJETIVO, DISTANCIA_INICIO_FRENADA, VELOCIDAD_MIN, VELOCIDAD_MAX);
-            avanzarMotor(vel);
-         }
+  // --- FRENADA ANTICIPADA CON BLOQUEO 
+case MODO_FRENADA: {
+       static bool frenada_completada = false;
+       
+       // ============================================================
+       // AJUSTES DE CALIBRACIÓN FINA
+       // ============================================================
+       int target_usuario = DISTANCIA_OBJETIVO + 5; 
+       
+       // 1. CORRECCIÓN DEL OFFSET (EL CAMBIO IMPORTANTE)
+       // Disparo del freno
+       int anticipacion = 10; 
+       
+       // 2. RAMPA
+       int dist_inicio_rampa = 180; 
+       
+       // 3. VELOCIDADES
+       // Bajamos un pelín la mínima para que llegue muriendo y el frenazo sea seco.
+       // Si el coche se cala con este valor (al bajar la bateria o algo) subir a 55 o 60
+       int vel_minima_llegada = 50; 
+       int vel_crucero = 140;      
+      
+       // Distancia real restante hasta el punto de "GOLPE DE FRENO"
+       int distancia_al_trigger = dist_actual - (target_usuario + anticipacion);
+
+       // Rearme: Margen de seguridad para volver a activar
+       if (dist_actual > (target_usuario + 60)) frenada_completada = false;
+
+       if (frenada_completada) {
+           detenerMotor();
+       }
+       else {
+           // --- FASE 1: GOLPE DE FRENO (DISPARO) ---
+           if (distancia_al_trigger <= 0) {
+               
+               // TIEMPO DE FRENADO ADAPTATIVO
+               // Si venía rápido, frenamos más tiempo.
+               int tiempo_freno = 300; 
+               if (pwm_actual > 100) tiempo_freno = 500; 
+
+               retrocederMotor(255); // Freno a fondo
+               delay(tiempo_freno);  
+               
+               detenerMotor();
+               frenada_completada = true; 
+           }
+           
+           // --- FASE 2: RAMPA DE APROXIMACIÓN ---
+           else if (distancia_al_trigger <= dist_inicio_rampa) {
+               // Mapeamos para que baje suavemente hasta vel_minima
+               int pwm_calculado = map(distancia_al_trigger, 0, dist_inicio_rampa, vel_minima_llegada, vel_crucero);
+               
+               // Constrain es vital para no enviar valores negativos o absurdos
+               pwm_calculado = constrain(pwm_calculado, vel_minima_llegada, vel_crucero);
+               
+               avanzarMotor(pwm_calculado);
+           }
+           
+           // --- FASE 3: VELOCIDAD CRUCERO ---
+           else {
+               avanzarMotor(vel_crucero);
+           }
        }
        girarRuedas(DIR_CENTRO);
        break;
-    }
+}
   }
 
-  // 4. ENVIAR DATOS A SCADA
+  // 4. ENVIAR DATOS A SCADA (Si hay conexión)
   static unsigned long lastSendTime = 0;
   if (millis() - lastSendTime > 100) {
     lastSendTime = millis();
-    
     if (client && client.connected()) {
       int d_frontal = (MODO_ACTUAL == MODO_FRENADA || MODO_ACTUAL == MODO_CARRERA) ? dist_actual : 0;
       int d_lateral = (MODO_ACTUAL == MODO_SEGUIMIENTO) ? dist_actual : 0;
-      
-      sim_vbat = 12.0 + (random(-5, 5) / 10.0);
-      sim_ibat = 1.5 + (pwm_actual / 255.0) + (random(-1, 1) / 10.0);
+      sim_vbat = 20.0; sim_ibat = 3; 
 
       String tramaTx = String(angulo_servo_actual) + ";" + 
                        String(d_frontal) + ";" + 
@@ -360,7 +387,6 @@ void loop() {
                        String(sentido_actual) + ";" + 
                        String(sim_vbat, 1) + ";" +    
                        String(sim_ibat, 1) + "*";    
-
       client.print(tramaTx);
     }
   }
