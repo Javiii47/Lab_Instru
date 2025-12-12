@@ -167,6 +167,9 @@ void procesarTramaSCADA(String trama)
     {
       MODO_ACTUAL = MODO_FRENADA;
       servoLidar.write(ANGULO_LIDAR_FRENTE);
+
+        last_dist_pd = 0;
+        last_time_pd = millis();
     }
   }
   else if (rx_btn_seguimiento == 1)
