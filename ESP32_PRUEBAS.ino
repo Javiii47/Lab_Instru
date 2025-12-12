@@ -96,8 +96,8 @@ double totalFiltro = 0;
 const double MAX_DIST_LOGICA = 80.0;
 
 // Velocidades (Escala 0-255 para coincidir con tu función avanzarMotor)
-int velocidadBase = 160;  // Velocidad en recta
-int velocidadMinima = 90; // Velocidad en curva cerrada
+int velocidadBase = 100;  // Velocidad en recta
+int velocidadMinima = 50; // Velocidad en curva cerrada
 
 // Timing
 unsigned long lastTimePID = 0;
@@ -176,7 +176,7 @@ void procesarTramaSCADA(String trama)
 // --- LÓGICA INVERTIDA PARA CORREGIR EL SENTIDO ---
 void avanzarMotor(int velocidad)
 {
-  velocidad = constrain(velocidad, 0, 255);
+  velocidad = map(velocidad, 0, 100, 0, 255);
   pwm_actual = velocidad;
   sentido_actual = 1;
 
@@ -189,7 +189,7 @@ void avanzarMotor(int velocidad)
 
 void retrocederMotor(int velocidad)
 {
-  velocidad = constrain(velocidad, 0, 255);
+  velocidad = map(velocidad, 0, 100, 0, 255);
   pwm_actual = velocidad;
   sentido_actual = 0;
 
