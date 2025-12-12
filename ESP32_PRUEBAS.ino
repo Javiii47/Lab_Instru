@@ -234,12 +234,13 @@ void setup() {
   Serial.println("\nAbriendo Zona Wifi...");
   WiFi.softAP(ssid, password);
 
+  /*
   // Esperamos conexión
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-
+*/
   /*    //Modo STA  
   Serial.println("\nWiFi Conectado!");
   Serial.print("IP ESP32: ");
