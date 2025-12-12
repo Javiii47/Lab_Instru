@@ -51,6 +51,16 @@ const bool INVERTIR_SERVO = false;
 uint16_t DISTANCIA_OBJETIVO = 20; // Paramos a 20cm para asegurar
 const uint16_t MARGEN_SEGUIMIENTO = 1;
 
+// --- VARIABLES DEL CONTROLADOR PD  MODO FRENADA ---
+// AJUSTA ESTOS DOS VALORES PARA CALIBRAR
+float Kp_Frenada = 1.2;   // PROPORCIONAL: "Fuerza del muelle". Si es bajo, no llega. Si es alto, oscila.
+float Kd_Frenada = 0.5;  // DERIVATIVO: "Freno de aire". Evita que te estrelles si vienes rápido.
+
+// Variables de memoria para el cálculo matemático
+unsigned long last_time_pd = 0;
+int last_dist_pd = 0;
+
+
 // --- MODOS DE FUNCIONAMIENTO ---
 enum ModoCoche
 {
@@ -166,6 +176,10 @@ void procesarTramaSCADA(String trama)
       MODO_ACTUAL = MODO_SEGUIMIENTO;
       servoLidar.write(ANGULO_LIDAR_PARED);
     }
+  }
+  else
+  {
+    MODO_ACTUAL = MODO_ESPERA;
   }
 }
 
@@ -488,82 +502,83 @@ void loop()
   }
 
     // --- FRENADA ANTICIPADA CON BLOQUEO
-  case MODO_FRENADA:
-  {
+      case MODO_FRENADA: {
+        servoLidar.write(ANGULO_LIDAR_FRENTE);
+        
+        static bool frenada_completada = false;
 
-    servoLidar.write(ANGULO_LIDAR_FRENTE);
-    Serial.println(DISTANCIA_OBJETIVO);
-    static bool frenada_completada = false;
+        // 1. Rearme (Si nos alejamos 50cm del objetivo reactivamos)
+        if (dist_actual > (DISTANCIA_OBJETIVO + 50)) {
+             frenada_completada = false;
+        }
 
-    // ============================================================
-    // AJUSTES DE CALIBRACIÓN FINA
-    // ============================================================
-    float target_usuario = DISTANCIA_OBJETIVO * 1.1132 + 0.2856;
+        if (frenada_completada) {
+            detenerMotor();
+        } 
+        else {
+            // --- MATEMÁTICAS PD ---
+            unsigned long now = millis();
+            double dt = (now - last_time_pd) / 1000.0; 
+            if (dt <= 0) dt = 0.001; 
 
-    // 1. CORRECCIÓN DEL OFFSET (EL CAMBIO IMPORTANTE)
-    // Disparo del freno
-    int anticipacion = 20;
+            // Error: Positivo si estamos LEJOS, Negativo si nos hemos pasado
+            int error_frenada = dist_actual - DISTANCIA_OBJETIVO;
 
-    // 2. RAMPA
-    int dist_inicio_rampa = 180;
+            // Velocidad: Negativa si nos acercamos
+            double velocidad = (dist_actual - last_dist_pd) / dt;
 
-    // 3. VELOCIDADES
-    // Bajamos un pelín la mínima para que llegue muriendo y el frenazo sea seco.
-    // Si el coche se cala con este valor (al bajar la bateria o algo) subir a 55 o 60
-    int vel_minima_llegada = 50;
-    int vel_crucero = 140;
+            // Lógica de seguridad para derivadas locas (ruido del sensor)
+            // Si la velocidad calculada es absurda (>200cm/s), la ignoramos
+            if (abs(velocidad) > 300) velocidad = 0;
 
-    // Distancia real restante hasta el punto de "GOLPE DE FRENO"
-    float distancia_al_trigger = dist_actual - (target_usuario + anticipacion);
+            // FÓRMULA PD
+            int salida_control = (Kp_Frenada * error_frenada) + (Kd_Frenada * velocidad);
 
-    // Rearme: Margen de seguridad para volver a activar
-    if (dist_actual > (target_usuario + 60))
-      frenada_completada = false;
+            // Actualizamos memoria
+            last_time_pd = now;
+            last_dist_pd = dist_actual;
 
-    if (frenada_completada)
-    {
-      detenerMotor();
+            // --- ZONA MUERTA (LA CLAVE PARA QUE PARE) ---
+            // Si el error es menor de 4cm, consideramos que hemos llegado.
+            // Esto evita que el coche intente corregir milímetros y se vuelva loco.
+           
+// --- ZONA MUERTA AUMENTADA ---
+            // Aumentamos a 5cm. Si está entre 15 y 25 (siendo 20 el objetivo), SE ACABÓ.
+            // Los motores DC no tienen precisión para menos.
+            if (abs(error_frenada) <= 5) {
+                detenerMotor();
+                frenada_completada = true; // Candado inmediato
+            }
+            else {
+                // GESTIÓN DEL MOTOR
+                if (salida_control > 0) {
+                    // AVANZAR
+                    int pwm_base = 40; // Bajamos la base (antes 45 o 60)
+                    
+                    // TRUCO NUEVO: Si estamos muy cerca (menos de 15cm de error),
+                    // quitamos la fuerza base para que no se pase de largo.
+                    if (error_frenada < 15) pwm_base = 30; 
+
+                    int pwm_final = salida_control + pwm_base; 
+                    avanzarMotor(pwm_final);
+                }
+                else {
+                   // RETROCEDER
+                   // Aquí la Kd actúa frenando.
+                   int pwm_freno = abs(salida_control);
+                   
+                   // Limitamos mucho el freno marcha atrás para evitar el rebote
+                   pwm_freno = constrain(pwm_freno, 0, 90); 
+                   
+                   retrocederMotor(pwm_freno);
+                }
+            }
+        }
+        girarRuedas(DIR_CENTRO);
+        break;
     }
-    else
-    {
-      // --- FASE 1: GOLPE DE FRENO (DISPARO) ---
-      if (distancia_al_trigger <= 0)
-      {
 
-        // TIEMPO DE FRENADO ADAPTATIVO
-        // Si venía rápido, frenamos más tiempo.
-        int tiempo_freno = 300;
-        if (pwm_actual > 100)
-          tiempo_freno = 500;
-
-        retrocederMotor(255); // Freno a fondo
-        delay(tiempo_freno);
-
-        detenerMotor();
-        frenada_completada = true;
-      }
-
-      // --- FASE 2: RAMPA DE APROXIMACIÓN ---
-      else if (distancia_al_trigger <= dist_inicio_rampa)
-      {
-        // Mapeamos para que baje suavemente hasta vel_minima
-        int pwm_calculado = map(distancia_al_trigger, 0, dist_inicio_rampa, vel_minima_llegada, vel_crucero);
-
-        // Constrain es vital para no enviar valores negativos o absurdos
-        pwm_calculado = constrain(pwm_calculado, vel_minima_llegada, vel_crucero);
-
-        avanzarMotor(pwm_calculado);
-      }
-
-      // --- FASE 3: VELOCIDAD CRUCERO ---
-      else
-      {
-        avanzarMotor(vel_crucero);
-      }
-    }
-    girarRuedas(DIR_CENTRO);
-    break;
-  }
+    case MODO_ESPERA: { break; }
   }
 
   // 4. ENVIAR DATOS A SCADA (Si hay conexión)
