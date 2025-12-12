@@ -174,6 +174,35 @@ void procesarTramaSCADA(String trama)
 // ==========================================
 
 // --- LÓGICA INVERTIDA PARA CORREGIR EL SENTIDO ---
+void giroMotor(int velocidad_f, int velocidad_b)
+{
+
+  velocidad_f = map(velocidad_f, 0, 100, 0, 255);
+  velocidad_b = map(velocidad_b, 0, 100, 0, 255);
+
+  int aux_pwm = velocidad_f - velocidad_b;
+  if (aux_pwm < 0)
+  {
+    sentido_actual = 0;
+  }
+  else
+  {
+    sentido_actual = 1;
+  }
+  pwm_actual = abs(aux_pwm);
+  if pwm_actual
+    <= 5;
+  {
+    detenerMotor();
+    return;
+  }
+  digitalWrite(EN_L_PIN, HIGH);
+  analogWrite(LPWM_PIN, velocidad_f); // Velocidad por LPWM
+
+  digitalWrite(EN_R_PIN, HIGH);
+  analogWrite(RPWM_PIN, velocidad_b); // 0 por RPWM
+}
+/*    legacy
 void avanzarMotor(int velocidad)
 {
   velocidad = map(velocidad, 0, 100, 0, 255);
@@ -199,7 +228,7 @@ void retrocederMotor(int velocidad)
   digitalWrite(EN_R_PIN, HIGH);
   analogWrite(RPWM_PIN, velocidad); // Velocidad por RPWM
 }
-
+*/
 void detenerMotor()
 {
   pwm_actual = 0;
@@ -448,6 +477,7 @@ void loop()
   // --- CARRERA (TELEDIRIGIDO) ---
   case MODO_CARRERA:
   {
+    /*
     girarRuedas(rx_angulo);
     if (rx_duty_fwd > 5)
       avanzarMotor(rx_duty_fwd);
@@ -455,6 +485,9 @@ void loop()
       retrocederMotor(rx_duty_bwd);
     else
       detenerMotor();
+    */
+    giroMotor(rx_duty_fwd, rx_duty_bwd);
+    girarRuedas(rx_angulo);
     break;
   }
 
