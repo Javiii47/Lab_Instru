@@ -188,15 +188,17 @@ void giroMotor(int velocidad_f, int velocidad_b)
     sentido_actual = 1;
   }
   pwm_actual = abs(aux_pwm);
-  if (pwm_actual <= 5);{
+  if (pwm_actual <= 5) {
     detenerMotor();
-    return;
   }
-  digitalWrite(EN_L_PIN, HIGH);
-  analogWrite(LPWM_PIN, velocidad_f); // Velocidad por LPWM
+  else {
+    digitalWrite(EN_L_PIN, HIGH);
+    analogWrite(LPWM_PIN, velocidad_f); // Velocidad por LPWM
 
-  digitalWrite(EN_R_PIN, HIGH);
-  analogWrite(RPWM_PIN, velocidad_b); // 0 por RPWM
+    digitalWrite(EN_R_PIN, HIGH);
+    analogWrite(RPWM_PIN, velocidad_b); // 0 por RPWM
+  }
+  
 }
    
 void avanzarMotor(int velocidad)
