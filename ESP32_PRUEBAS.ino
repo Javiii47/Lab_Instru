@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <ESP32Servo.h> 
 #include <WiFi.h>
+#include <math.h>
 
 // ==========================================
 // 1. CONFIGURACIÓN WIFI (SCADA)
@@ -39,10 +40,12 @@ const int DIR_CENTRO = 90;
 const int DIR_IZQUIERDA = 60;  
 const int DIR_DERECHA = 120;   
 
-// --- CONSTANTES DE SEGURIDAD (MODIFICADAS PARA QUE NO CHOQUE) ---
-// Velocidades mucho más bajas para controlar la inercia
-  
-int VELOCIDAD_SEGUIMIENTO = 80; 
+// --- CONFIGURACIÓN FÍSICA Y SERVO ---
+const double ANGLO_SENSOR = 45.0; 
+const double RAD_CONVERSION = 3.14159 / 180.0;
+
+// Cambiar a true si las ruedas giran hacia la pared en vez de alejarse
+const bool INVERTIR_SERVO = false; 
 
 // Distancias de Seguridad
 uint16_t DISTANCIA_OBJETIVO = 20; // Paramos a 20cm para asegurar
@@ -74,6 +77,30 @@ int rx_btn_carrera = 0;
 int rx_btn_frenada = 0;
 int rx_btn_seguimiento = 0;
 
+// Variables PID
+double Kp = 2.0; 
+double Ki = 0.05; 
+double Kd = 4.0; 
+double setPoint = 30.0; // Distancia deseada (cm)
+
+// Variables PID internas
+double error, lastError = 0, integral = 0;
+double pidOutput = 0; // Resultado del PID (-45 a 45 grados lógicos)
+
+// Filtro Lidar
+const int NUM_LECTURAS = 3; 
+double lecturas[NUM_LECTURAS];
+int indiceLectura = 0;
+double totalFiltro = 0;
+const double MAX_DIST_LOGICA = 80.0; 
+
+// Velocidades (Escala 0-255 para coincidir con tu función avanzarMotor)
+int velocidadBase = 160;    // Velocidad en recta
+int velocidadMinima = 90;   // Velocidad en curva cerrada
+
+// Timing
+unsigned long lastTimePID = 0;
+const int sampleTime = 50; 
 
 // ==========================================
 // 3. FUNCIONES PARSER (RECIBIR DATOS SCADA)
@@ -200,7 +227,31 @@ void actualizarLidarRapido() {
     }
   }
 }
+double filtrarLidar(double nuevaLectura) {
+  totalFiltro = totalFiltro - lecturas[indiceLectura];
+  // Si la lectura es 0 o gigante (hueco), limitamos para que el PID reaccione rápido pero suave
+  if (nuevaLectura > MAX_DIST_LOGICA || nuevaLectura == 0) {
+    nuevaLectura = MAX_DIST_LOGICA;
+  }
+  lecturas[indiceLectura] = nuevaLectura;
+  totalFiltro = totalFiltro + lecturas[indiceLectura];
+  
+  indiceLectura++;
+  if (indiceLectura >= NUM_LECTURAS) indiceLectura = 0;
+  
+  return totalFiltro / NUM_LECTURAS;
+}
 
+void gestionarVelocidadDinamica(double pidOut) {
+  // Cuanto más cerrada sea la curva (mayor pidOut), más lento vamos
+  double giroAbs = abs(pidOut); // Valor entre 0 y 45 aprox
+  
+  // Mapeamos: 0 grados -> Vel Base, 45 grados -> Vel Minima
+  int velObjetivo = map(giroAbs, 0, 45, velocidadBase, velocidadMinima);
+  
+  // Llamamos a TU función de motor
+  avanzarMotor(velObjetivo);
+}
 // ==========================================
 // SETUP
 // ==========================================
@@ -222,7 +273,9 @@ void setup() {
   detenerMotor();
   girarRuedas(DIR_CENTRO);
   
-  
+    // Inicializar array filtro
+  for(int i=0; i<NUM_LECTURAS; i++) lecturas[i]=0;
+
   // --- 2. CONEXIÓN WIFI (COMENTADO PARA PRUEBAS OFFLINE) ---
   
   /*    //Modo STA
@@ -285,24 +338,64 @@ void loop() {
     // --- SEGUIMIENTO ---
     case MODO_SEGUIMIENTO: {
 
-      servoLidar.write(ANGULO_LIDAR_PARED);
+      unsigned long now = millis();
 
-      if (dist_actual == 0) {
-         girarRuedas(DIR_DERECHA); // Si lee 0, aléjate
-      }
-      else if (dist_actual > (30 + MARGEN_SEGUIMIENTO)) {
-         girarRuedas(DIR_IZQUIERDA);
-      }
-      else if (dist_actual < (30 - MARGEN_SEGUIMIENTO)) {
-         girarRuedas(DIR_DERECHA);
-      }
-      else {
-         girarRuedas(DIR_CENTRO);
-      }
-      avanzarMotor(VELOCIDAD_SEGUIMIENTO);
-      break; 
-    } 
+  // 1. LEER SENSOR SIEMPRE (Para no perder paquetes serial)
+  actualizarLidarRapido(); 
 
+  // 2. CICLO PID (Cada 50ms)
+  if (now - lastTimePID >= sampleTime) {
+    double dt = (double)(now - lastTimePID) / 1000.0;
+
+    // --- A. FILTRADO Y GEOMETRÍA ---
+    double inputRaw = (double)dist_actual; 
+    double inputFiltrado = filtrarLidar(inputRaw);
+    
+    // Distancia perpendicular (Cateto opuesto)
+    double distPerpendicular = inputFiltrado * sin(ANGLO_SENSOR * RAD_CONVERSION);
+
+    // --- B. CÁLCULO DEL ERROR ---
+    // PARED A LA IZQUIERDA:
+    // Si dist > 30 (lejos) -> Error POSITIVO -> Girar a la Izquierda para acercarse
+    // Si dist < 30 (cerca) -> Error NEGATIVO -> Girar a la Derecha para alejarse
+    // NOTA: Ajusta el signo (+/-) según hacia dónde gire tu servo con angulos > 90
+    error = distPerpendicular - setPoint; 
+
+    // --- C. ALGORITMO PID ---
+    integral += error * dt;
+    double pTerm = Kp * error;
+    double dTerm = Kd * (error - lastError) / dt;
+    double preOutput = pTerm + (Ki * integral) + dTerm;
+
+    // Anti-Windup (Limitamos la salida lógica a +/- 45 grados de corrección)
+    double limiteLogico = 45.0;
+    if (preOutput > limiteLogico) {
+      integral -= error * dt; 
+      preOutput = limiteLogico;
+    } else if (preOutput < -limiteLogico) {
+      integral -= error * dt;
+      preOutput = -limiteLogico;
+    }
+    pidOutput = preOutput;
+
+    // --- D. APLICAR A TUS FUNCIONES ---
+    
+    // 1. Calcular ángulo final (90 +/- corrección)
+    // Asumimos: < 90 es Izquierda, > 90 es Derecha (o viceversa según tu servo)
+    // Si tu coche gira al revés, cambia el '+' por un '-'
+    int anguloFinal = DIR_CENTRO + (int)pidOutput;
+    
+    // Llamamos a TU función de servo
+    girarRuedas(anguloFinal); 
+
+    // 2. Controlar velocidad (Frenar en curvas)
+    // Llamamos a TU función de motor a través de la lógica dinámica
+    gestionarVelocidadDinamica(pidOutput);
+
+    // Actualizar variables
+    lastError = error;
+    lastTimePID = now; 
+    } }
     // --- CARRERA (TELEDIRIGIDO) ---
     case MODO_CARRERA: {
       girarRuedas(rx_angulo);
