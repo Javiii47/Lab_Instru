@@ -41,12 +41,11 @@ const int DIR_DERECHA = 120;
 
 // --- CONSTANTES DE SEGURIDAD (MODIFICADAS PARA QUE NO CHOQUE) ---
 // Velocidades mucho más bajas para controlar la inercia
-int VELOCIDAD_MAX_SEGURA = 100; 
-int VELOCIDAD_LENTA = 65;       
+  
 int VELOCIDAD_SEGUIMIENTO = 80; 
 
 // Distancias de Seguridad
-uint16_t DISTANCIA_OBJETIVO = 50; // Paramos a 20cm para asegurar
+uint16_t DISTANCIA_OBJETIVO = 20; // Paramos a 20cm para asegurar
 const uint16_t MARGEN_SEGUIMIENTO = 1; 
 
 // --- MODOS DE FUNCIONAMIENTO ---
@@ -58,7 +57,7 @@ enum ModoCoche {
 };
 
 // !!!!!!! SELECCIONA AQUÍ EL MODO !!!!!!!
-ModoCoche MODO_ACTUAL = MODO_FRENADA;  
+ModoCoche MODO_ACTUAL = MODO_ESPERA;  
 
 // Variables Globales de Estado
 uint16_t dist_actual = 0;   // Lectura Lidar
@@ -217,15 +216,13 @@ void setup() {
   servoLidar.setPeriodHertz(50);    
   servoLidar.attach(PIN_SERVO_LIDAR, 500, 2400); 
   servoDireccion.setPeriodHertz(50);
-  servoDireccion.attach(PIN_SERVO_DIRECCION, 1000, 2000);
+  servoDireccion.attach(PIN_SERVO_DIRECCION, 1160, 1900);
 
   // Estado Inicial
   detenerMotor();
   girarRuedas(DIR_CENTRO);
   
-  if (MODO_ACTUAL == MODO_SEGUIMIENTO) servoLidar.write(ANGULO_LIDAR_PARED);
-  else servoLidar.write(ANGULO_LIDAR_FRENTE);
-
+  
   // --- 2. CONEXIÓN WIFI (COMENTADO PARA PRUEBAS OFFLINE) ---
   
   Serial.println("\nConectando a WiFi...");
@@ -244,10 +241,8 @@ void setup() {
 
   tcpServer.begin();
   Serial.println("Servidor TCP puerto 23 iniciado");
-  */
   
-  Serial.println(">>> MODO OFFLINE ACTIVADO: WIFI COMENTADO <<<");
-  delay(1000);
+
 }
 
 // ==========================================
@@ -278,6 +273,9 @@ void loop() {
 
     // --- SEGUIMIENTO ---
     case MODO_SEGUIMIENTO: {
+
+      servoLidar.write(ANGULO_LIDAR_PARED);
+
       if (dist_actual == 0) {
          girarRuedas(DIR_DERECHA); // Si lee 0, aléjate
       }
@@ -305,16 +303,19 @@ void loop() {
 
   // --- FRENADA ANTICIPADA CON BLOQUEO 
 case MODO_FRENADA: {
+
+  servoLidar.write(ANGULO_LIDAR_FRENTE);
+  Serial.println(DISTANCIA_OBJETIVO);
        static bool frenada_completada = false;
        
        // ============================================================
        // AJUSTES DE CALIBRACIÓN FINA
        // ============================================================
-       int target_usuario = DISTANCIA_OBJETIVO + 5; 
+       float target_usuario = DISTANCIA_OBJETIVO * 1.1132 + 0.2856; 
        
        // 1. CORRECCIÓN DEL OFFSET (EL CAMBIO IMPORTANTE)
        // Disparo del freno
-       int anticipacion = 10; 
+       int anticipacion = 20; 
        
        // 2. RAMPA
        int dist_inicio_rampa = 180; 
@@ -326,7 +327,7 @@ case MODO_FRENADA: {
        int vel_crucero = 140;      
       
        // Distancia real restante hasta el punto de "GOLPE DE FRENO"
-       int distancia_al_trigger = dist_actual - (target_usuario + anticipacion);
+       float distancia_al_trigger = dist_actual - (target_usuario + anticipacion);
 
        // Rearme: Margen de seguridad para volver a activar
        if (dist_actual > (target_usuario + 60)) frenada_completada = false;
