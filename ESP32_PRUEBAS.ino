@@ -520,14 +520,14 @@ void loop()
         else {
             // --- MATEMÁTICAS PD ---
             unsigned long now = millis();
-            double dt = (now - last_time_pd) / 1000.0; 
-            if (dt <= 0) dt = 0.001; 
+            double dt_frenada = (now - last_time_pd) / 1000.0; 
+            if (dt_frenada <= 0) dt_frenada = 0.001; 
 
             // Error: Positivo si estamos LEJOS, Negativo si nos hemos pasado
             int error_frenada = dist_actual - DISTANCIA_OBJETIVO;
 
             // Velocidad: Negativa si nos acercamos
-            double velocidad = (dist_actual - last_dist_pd) / dt;
+            double velocidad = (dist_actual - last_dist_pd) / dt_frenada;
 
             // Lógica de seguridad para derivadas locas (ruido del sensor)
             // Si la velocidad calculada es absurda (>200cm/s), la ignoramos
