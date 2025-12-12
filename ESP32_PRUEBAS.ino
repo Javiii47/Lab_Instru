@@ -5,8 +5,8 @@
 // ==========================================
 // 1. CONFIGURACIÓN WIFI (SCADA)
 // ==========================================
-const char* ssid = "Qué mira bobo";      // PON AQUÍ TU RED
-const char* password = "Peppa Pig";         // PON AQUÍ TU PASS
+const char* ssid = "coche_lab3";      // PON AQUÍ TU RED
+const char* password = "abcd1234";         // PON AQUÍ TU PASS
 WiFiServer tcpServer(23);                  // Puerto 23
 WiFiClient client;                         // Cliente global
 
@@ -225,9 +225,14 @@ void setup() {
   
   // --- 2. CONEXIÓN WIFI (COMENTADO PARA PRUEBAS OFFLINE) ---
   
+  /*    //Modo STA
   Serial.println("\nConectando a WiFi...");
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
+  */
+  // Modo AP
+  Serial.println("\nAbriendo Zona Wifi...");
+  WiFi.softAP(ssid, password);
 
   // Esperamos conexión
   while (WiFi.status() != WL_CONNECTED) {
@@ -235,9 +240,14 @@ void setup() {
     Serial.print(".");
   }
 
+  /*    //Modo STA  
   Serial.println("\nWiFi Conectado!");
   Serial.print("IP ESP32: ");
   Serial.println(WiFi.localIP()); 
+  */
+
+  // Alternativa: Modo AP
+  Serial.println(WiFi.softAPIP());
 
   tcpServer.begin();
   Serial.println("Servidor TCP puerto 23 iniciado");
